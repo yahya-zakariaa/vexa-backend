@@ -45,6 +45,9 @@ const signup = async (req, res, next) => {
       address: address ? [address] : [],
     });
 
+    console.log(newUser);
+    
+
     const sanitizedUser = {
       _id: newUser._id,
       name: newUser.name,

@@ -5,14 +5,14 @@ const productSchema = new mongoose.Schema(
     name: {
       type: String,
       required: [true, "Name is required"],
-      maxLength: [150, "Name must be at most 50 characters"],
+      maxLength: [150, "Name must be at most 150 characters"],
       trim: true,
     },
     description: {
       type: String,
       required: [true, "Description is required"],
       minLength: [10, "Description must be at least 10 characters"],
-      maxLength: [500, "Description must be at most 200 characters"],
+      maxLength: [500, "Description must be at most 500 characters"],
       trim: true,
     },
     images: {
@@ -24,7 +24,7 @@ const productSchema = new mongoose.Schema(
       type: Number,
       required: [true, "Price is required"],
       min: [0, "Price must be at least 0"],
-      set: (v) => Math.round(v),
+      set: (v) => (v == null ? v : Math.round(Number(v))),
     },
 
     onSale: {
@@ -59,7 +59,7 @@ const productSchema = new mongoose.Schema(
     totalPrice: {
       type: Number,
       min: [0, "Total price must be at least 0"],
-      set: (v) => Math.round(v),
+      set: (v) => (v == null ? v : Math.round(Number(v))),
     },
 
     stock: {
@@ -112,63 +112,76 @@ const productSchema = new mongoose.Schema(
 
 productSchema.pre("save", function (next) {
   try {
+    // Ensure numeric fields are normalized and calculate total
+    if (this.price != null) this.price = Number(this.price);
+    if (this.discount != null) this.discount = Number(this.discount);
     this.calculateTotalPrice();
     next();
   } catch (err) {
     next(err);
   }
 });
-
 productSchema.pre("findOneAndUpdate", async function (next) {
-  const update = this.getUpdate();
-  const doc = await this.model.findOne(this.getQuery());
+  try {
+    const rawUpdate = this.getUpdate() || {};
+    // Support both top-level updates and $set updates
+    const update = rawUpdate.$set ? { ...rawUpdate.$set } : { ...rawUpdate };
 
-  const price = update.price !== undefined ? update.price : doc.price;
-  const discount =
-    update.discount !== undefined ? update.discount : doc.discount;
-  const discountType =
-    update.discountType !== undefined ? update.discountType : doc.discountType;
+    const doc = await this.model.findOne(this.getQuery());
+    if (!doc) return next();
 
-  let total = price;
-  let onSale = false;
+    const price = update.price !== undefined ? Number(update.price) : doc.price;
+    const discount =
+      update.discount !== undefined ? Number(update.discount) : doc.discount;
+    const discountType =
+      update.discountType !== undefined
+        ? update.discountType
+        : doc.discountType;
 
-  if (discountType === "percentage") {
-    total = Math.max(price * (1 - discount / 100), 0);
-    onSale = true;
-  } else if (discountType === "fixed") {
-    total = Math.max(price - discount, 0);
-    onSale = true;
+    let total = price;
+    let onSale = false;
+
+    if (discountType === "percentage") {
+      total = Math.max(price * (1 - (discount || 0) / 100), 0);
+      onSale = (discount || 0) > 0;
+    } else if (discountType === "fixed") {
+      total = Math.max(price - (discount || 0), 0);
+      onSale = (discount || 0) > 0;
+    }
+
+    const roundedTotal = Math.round(total);
+
+    // Write back into the update object preserving $set or top-level
+    if (rawUpdate.$set) {
+      rawUpdate.$set.totalPrice = roundedTotal;
+      rawUpdate.$set.onSale = onSale;
+      this.setUpdate(rawUpdate);
+    } else {
+      rawUpdate.totalPrice = roundedTotal;
+      rawUpdate.onSale = onSale;
+      this.setUpdate(rawUpdate);
+    }
+
+    next();
+  } catch (err) {
+    next(err);
   }
-
-  update.totalPrice = Math.round(total);
-  update.onSale = discountType !== "none" && discount > 0;
-
-  next();
 });
 
 productSchema.methods.calculateTotalPrice = function () {
-  if (
-    typeof this.price !== "number" ||
-    isNaN(this.price) ||
-    typeof this.discount !== "number" ||
-    isNaN(this.discount)
-  ) {
-    return;
-  }
-  const p = this.price;
-  const d = this.discount;
-  let finalPrice;
+  const p = Number(this.price);
+  const d = Number(this.discount || 0);
+  if (isNaN(p) || isNaN(d)) return;
+
+  let finalPrice = p;
   let isOnSale = false;
 
   if (this.discountType === "percentage") {
     finalPrice = Math.max(p * (1 - d / 100), 0);
-    isOnSale = true;
+    isOnSale = d > 0;
   } else if (this.discountType === "fixed") {
     finalPrice = Math.max(p - d, 0);
-    isOnSale = true;
-  } else {
-    finalPrice = p;
-    isOnSale = false;
+    isOnSale = d > 0;
   }
 
   this.totalPrice = Math.round(finalPrice);

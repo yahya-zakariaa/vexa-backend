@@ -1,8 +1,8 @@
 import { v2 as cloudinary } from "cloudinary";
 import streamifier from "streamifier";
 import dotenv from "dotenv";
-dotenv.config();
-console.log("Cloudinary Secret:", process.env.CLOUDINARY_API_SECRET);
+
+dotenv.config({ path: new URL("../.env", import.meta.url).pathname });
 
 cloudinary.config({
   cloud_name: "docsb24m0",

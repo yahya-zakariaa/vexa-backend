@@ -1,5 +1,7 @@
 import express from "express";
 import dotenv from "dotenv";
+import path from "path";
+import { fileURLToPath } from "url";
 import { connectDB } from "./lib/db.js";
 import authRoutes from "./routes/auth.route.js";
 import productRoutes from "./routes/store/product.route.js";
@@ -15,7 +17,11 @@ import bodyParser from "body-parser";
 
 import cors from "cors";
 EventEmitter.defaultMaxListeners = 20;
-dotenv.config();
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+dotenv.config({ path: path.join(__dirname, ".env") });
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -62,7 +68,16 @@ app.use((err, req, res, next) => {
   res.status(500).json({ status: "error", message: "Internal Server Error" });
 });
 
-app.listen(PORT, () => {
-  console.log("Server is running on port ", PORT);
-  connectDB();
-});
+const startApp = async () => {
+  try {
+    await connectDB();
+    app.listen(PORT, () => {
+      console.log("Server is running on port", PORT);
+    });
+  } catch (error) {
+    console.error("Failed to start server:", error);
+    process.exit(1);
+  }
+};
+
+startApp();

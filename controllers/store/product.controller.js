@@ -13,8 +13,11 @@ const getProducts = async (req, res, next) => {
     sizes,
     onSale,
   } = req.query;
-  const skip = (page - 1) * limit;
-  console.log(limit);
+
+  // normalize pagination values
+  const limitNum = Number(limit) > 0 ? parseInt(limit, 10) : 12;
+  const pageNum = Number(page) > 0 ? parseInt(page, 10) : 1;
+  const skip = (pageNum - 1) * limitNum;
 
   const query = {
     stock: { $gte: 0 },
@@ -24,16 +27,26 @@ const getProducts = async (req, res, next) => {
   }
   if (gender) query.gender = gender;
   if (onSale) query.onSale = onSale === "true";
-  if (minPrice || maxPrice) {
+  // price range: support 0 and explicit 0 values
+  const min = Number(minPrice);
+  const max = Number(maxPrice);
+  if (!Number.isNaN(min) || !Number.isNaN(max)) {
     query.price = {};
-    if (minPrice) query.price.$gte = Number(minPrice);
-    if (maxPrice) query.price.$lte = Number(maxPrice);
+    if (!Number.isNaN(min)) query.price.$gte = min;
+    if (!Number.isNaN(max)) query.price.$lte = max;
   }
   if (collection) {
     query.collection = collection;
   }
   if (sizes) {
-    query.sizes = { $in: Array.isArray(sizes) ? sizes : [sizes] };
+    let sizeArr = sizes;
+    if (typeof sizes === "string") {
+      // support comma-separated sizes like "S,M" or single size "M"
+      sizeArr = sizes.includes(",")
+        ? sizes.split(",").map((s) => s.trim())
+        : [sizes];
+    }
+    query.sizes = { $in: Array.isArray(sizeArr) ? sizeArr : [sizeArr] };
   }
   let sortOption = {};
   if (sort === "newest") sortOption = { createdAt: -1 };
@@ -41,26 +54,21 @@ const getProducts = async (req, res, next) => {
   else if (sort === "price_asc") sortOption = { price: 1 };
   else if (sort === "price_desc") sortOption = { price: -1 };
   try {
-    console.log(query, sortOption);
-
     const products = await Product.find(query)
       .sort(sortOption)
       .skip(skip)
-      .limit(parseInt(limit));
-    console.log(products.length);
+      .limit(limitNum)
+      .lean()
+      .exec();
 
-    if (!products.length) {
-      return res.status(200).json({
-        status: "success",
-        data: [],
-      });
-    }
     const total = await Product.countDocuments(query);
 
     return res.status(200).json({
       status: "success",
-      data: products,
+      data: products || [],
       total,
+      page: pageNum,
+      limit: limitNum,
     });
   } catch (error) {
     return next(error);
@@ -96,12 +104,16 @@ const getSearchSuggestions = async (req, res, next) => {
     };
 
     if (q && q.trim() !== "") {
-      query.name = { $regex: `^${q}`, $options: "i" };
+      const regex = { $regex: `^${q}`, $options: "i" };
+      // match either name OR collection
+      query.$or = [{ name: regex }, { collection: regex }];
     }
     let products = await Product.find(query)
       .sort({ createdAt: -1 })
       .limit(5)
-      .select("name _id images price stock collection");
+      .select("name _id images price stock collection")
+      .lean()
+      .exec();
 
     res.status(200).json({
       status: "success",
